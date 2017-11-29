@@ -120,7 +120,9 @@ Resources:
 
               with io.BytesIO(response['Body'].read()) as obj:
                   with gzip.GzipFile(fileobj=obj) as logfile:
-                      return json.load(logfile)['Records']
+                      records = json.load(logfile)['Records']
+                      sorted_records = sorted(records, key=lambda r: r['eventTime']) 
+                      return sorted_records
 
 
           def get_log_file_location(event):
@@ -323,6 +325,7 @@ Resources:
           Statement:
           - Effect: Allow
             Action:
+            - s3:GetBucketPolicy
             - s3:ListBucket
             - s3:PutObject
             Resource:
@@ -437,8 +440,10 @@ Resources:
                       aws_session_token=creds['Token'],
                   )
                   
-                  # Make an s3:ListObjects call using the instance credentials
+                  # Make calls using the instance credentials
                   res = cred_client.list_objects(Bucket='${ActivityGenBucket}')
+                  print(res)
+                  res = cred_client.get_bucket_policy(Bucket='${ActivityGenBucket}')
                   print(res)
               except botocore.exceptions.ClientError as e:
                   print(e)

@@ -58,7 +58,9 @@ def get_records(session, bucket, key):
 
     with io.BytesIO(response['Body'].read()) as obj:
         with gzip.GzipFile(fileobj=obj) as logfile:
-            return json.load(logfile)['Records']
+            records = json.load(logfile)['Records']
+            sorted_records = sorted(records, key=lambda r: r['eventTime']) 
+            return sorted_records
 
 
 def get_log_file_location(event):
