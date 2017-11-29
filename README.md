@@ -94,9 +94,17 @@ Note that the `sourceIPAddress` value for actions performed by the CloudFormatio
 
 The deletion of logs is an action that should normally not occur in most accounts, and may indicate an attacker trying to cover tracks.
 
-In this exercise, we will focus on API calls that delete logs in CloudWatch Logs or CloudTrail. You need to implement code for the `deleting_logs` function to check for those API calls by looking for API events whose name starts with `"Delete"`. Use what you've learned about looking at CloudTrail records so far to identify the fields you will need to use, and borrow code patterns from `print_short_record` as needed.
+In this exercise, we will focus on API calls that delete logs in CloudWatch Logs or CloudTrail. You need to implement code for the `deleting_logs` function to check for those API calls by looking for API events whose name starts with `"Delete"`. For the purposes of this exercise, you can focus this check on just CloudWatch Logs (logs.amazonaws.com) and CloudTrail (cloudtrail.amazonaws.com). 
+
+Use what you've learned about looking at CloudTrail records so far to identify the fields you will need to use, and borrow code patterns from `print_short_record` as needed.
 
 When a matching record is found, print it out using `print_short_record` and return True.
+
+### Bonus round!
+
+Expand the check to look for an API call that stops logging on a trail in CloudTrail (without deleting the trail).
+
+### Reference
 
 Curious about what some of the log deletion API calls do? Here are some docs to check out:
 
@@ -105,10 +113,6 @@ Curious about what some of the log deletion API calls do? Here are some docs to 
   - http://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DeleteLogStream.html
 - CloudTrail
   - http://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_DeleteTrail.html
-
-### Bonus round!
-
-Expand the check to look for an API call that stops logging on a trail in CloudTrail (without deleting the trail).
 
 ## Phase 2: Off-instance usage of instance credentials
 
@@ -120,7 +124,7 @@ Examine each record to look for ones that satisfy the following 3 properties for
 
 1. User making the call is using an assumed role
 2. The user's access key is a session key that begins with the string `'AS'` instead of `'AK'`
-3. The user's ARN ends with an instance identifier consisting of the string 'i-' followed by 8 or more alphanumeric characters in the username portion (e.g., i-d34db33f)
+3. The user's ARN ends with an instance identifier consisting of the string `'i-'` followed by 8 or more alphanumeric characters in the username portion (e.g., `'i-d34db33f'`)
 
 For #3, a regular expression pattern called `instance_identifier_arn_pattern` has been predefined for you to use. You can use it with Python's `match` function that returns True if the pattern matches and False otherwise:
 
@@ -131,6 +135,8 @@ if arn_matches:
 ```
         
 When a matching record is found, print it out using `print_short_record` and return True.
+
+### Reference
 
 Curious about what instance credentials are? See this documentation for more: 
 
@@ -170,7 +176,7 @@ For more information, please visit the following CloudWatch User Guide pages:
 
 # Cleaning up
 
-To delete the CloudFormation stack, a shell script, `teardown.sh`, has been provided. Run as follows:
+To delete the CloudFormation stack, a Bash script, `teardown.sh`, has been provided. Run as follows:
 
 ```./teardown.sh```
 
