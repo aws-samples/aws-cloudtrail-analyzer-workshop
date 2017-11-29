@@ -1,0 +1,479 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: "AWS re:Invent 2017 - SID 341 workshop exercise template"
+
+Parameters:
+  NotificationEmailAddress:
+   Type: String
+   Description: "Email address to notify of new detections"
+
+Conditions:
+  HasEmailAddress: !Not [!Equals [!Ref NotificationEmailAddress, ""]]
+  
+Resources:
+   
+  # =================================================================
+  # Lambda (analysis)
+  # =================================================================
+    
+  # Role used by the Lambda function for execution
+  AnalysisLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+      - PolicyName: LambdaPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - cloudwatch:PutMetricData
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource: '*'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: { Service: lambda.amazonaws.com }
+          Action:
+          - sts:AssumeRole
+        
+  # Lambda function to analyze CloudTrail logs
+  AnalysisLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import io
+          import re
+          import gzip
+          import json
+          import boto3
+
+
+          def print_short_record(record):
+              """
+              Prints out an abbreviated, one-line representation of a CloudTrail record.
+    
+              :return: always False since not a real scan
+              """
+              print('[{timestamp}] {region}\t{ip}\t{service}:{action}'.format(
+                  timestamp=record['eventTime'],
+                  region=record['awsRegion'],
+                  ip=record['sourceIPAddress'],
+                  service=record['eventSource'].split('.')[0],
+                  action=record['eventName']
+              ))
+    
+              return False
+
+
+          def deleting_logs(record):
+              """
+              Checks for API calls that delete logs in CloudWatch Logs or CloudTrail.
+    
+              :return: True if record matches, False otherwise
+              """
+              # TODO PHASE 1: If record matches, print using print_short_record and return True
+              pass  # do nothing
+    
+
+          instance_identifier_arn_pattern = re.compile(r'(.*?)/i\-[a-zA-Z0-9]{8,}$')
+
+          def instance_creds_used_outside_ec2(record):
+              """
+              Check for usage of EC2 instance credentials from outside the EC2 service.
+    
+              :return: True if record matches, False otherwise
+              """
+              # TODO PHASE 2: If record matches, print using print_short_record and return True
+              pass  # do nothing
+
+
+          analysis_functions = (
+              print_short_record,
+              deleting_logs,
+              instance_creds_used_outside_ec2,
+          )
+
+
+          def get_records(session, bucket, key):
+              """
+              Loads a CloudTrail log file, decompresses it, and extracts its records.
+
+              :param session: Boto3 session
+              :param bucket: Bucket where log file is located
+              :param key: Key to the log file object in the bucket
+              :return: list of CloudTrail records
+              """
+              s3 = session.client('s3')
+              response = s3.get_object(Bucket=bucket, Key=key)
+
+              with io.BytesIO(response['Body'].read()) as obj:
+                  with gzip.GzipFile(fileobj=obj) as logfile:
+                      return json.load(logfile)['Records']
+
+
+          def get_log_file_location(event):
+              """
+              Generator for the bucket and key names of each CloudTrail log 
+              file contained in the event sent to this function from S3.
+              (usually only one but this ensures we process them all).
+
+              :param event: S3:ObjectCreated:Put notification event
+              :return: yields bucket and key names
+              """
+              for event_record in event['Records']:
+                  bucket = event_record['s3']['bucket']['name']
+                  key = event_record['s3']['object']['key']
+                  yield bucket, key
+
+
+          def handler(event, context):
+              # Create a Boto3 session that can be used to construct clients
+              session = boto3.session.Session()
+              cloudwatch = session.client('cloudwatch')
+
+              # Get the S3 bucket and key for each log file contained in the event 
+              for bucket, key in get_log_file_location(event):
+                  # Load the CloudTrail log file and extract its records
+                  print('Loading CloudTrail log file s3://{}/{}'.format(bucket, key))
+                  records = get_records(session, bucket, key)
+                  print('Number of records in log file: {}'.format(len(records)))
+
+                  # Process the CloudTrail records
+                  for record in records:
+                      for func in analysis_functions:
+                          if func(record):
+                              # TODO PHASE 3: Put metric data to CloudWatch to trigger the alarm
+                              pass  # do nothing
+      Handler: index.handler
+      MemorySize: 1024
+      Role: !GetAtt AnalysisLambdaRole.Arn
+      Runtime: python3.6
+      Timeout: 300  # max is 300 seconds (5 minutes)
+   
+  # Permission for the S3 bucket to invoke the Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      FunctionName: !Ref AnalysisLambdaFunction
+
+  # =================================================================
+  # CloudTrail (logs)
+  # =================================================================
+  
+  # S3 bucket where CloudTrail log files will be delivered
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Status: Enabled
+            Prefix: "AWSLogs/"
+      NotificationConfiguration:
+        LambdaConfigurations:
+        - Function: !GetAtt AnalysisLambdaFunction.Arn
+          Event: "s3:ObjectCreated:Put"
+          Filter:
+            S3Key:
+              Rules:
+                - Name: prefix
+                  Value: !Sub AWSLogs/${AWS::AccountId}/CloudTrail/
+                - Name: suffix
+                  Value: json.gz
+  
+  # Policy granting CloudTrail access to the S3 bucket
+  CloudTrailBucketPolicy: 
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub "${CloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*" 
+            Condition: # ensure we have control of objects written to the bucket
+              StringEquals:
+                s3:x-amz-acl: "bucket-owner-full-control"
+  
+  # Trail to gather logs for all regions
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      IsLogging: true
+      IsMultiRegionTrail: false
+      IncludeGlobalServiceEvents: true
+      S3BucketName: !Ref CloudTrailBucket
+      EnableLogFileValidation: true
+    DependsOn:
+      # Wait for the S3 bucket policy to be created, which implies 
+      # that the bucket itself has been created
+      - CloudTrailBucketPolicy
+
+  # =================================================================
+  # CloudWatch (alerting)
+  # =================================================================
+  
+  DetectionNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: "SNS topic for notifications of new detections"
+  
+  DetectionNotificationEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmailAddress
+    Properties:
+      Endpoint: !Ref NotificationEmailAddress
+      Protocol: email
+      TopicArn: !Ref DetectionNotificationTopic
+  
+  DetectionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      AlarmActions:
+      - !Ref DetectionNotificationTopic
+      AlarmDescription: "re:Invent 2017, SID341 - Alarm for CloudTrail-based detections"
+      ComparisonOperator:  GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: AnomaliesDetected
+      Namespace: AWS/reInvent2017/SID341
+      Period: 60
+      Statistic: Sum
+      Threshold: 1.0
+  
+
+  # =================================================================
+  # Activity Generation
+  # 
+  # *** SPOILER ALERT! ***
+  #
+  # The resources below are created to generate activity that will
+  # manifest API events in CloudTrail logs that will be used during
+  # the analysis portion of the exercises. Scrolling down further
+  # may give away answers to portions of the exercise, so proceed
+  # with caution!
+  # =================================================================
+
+  ActivityGenBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Status: Enabled
+            Prefix: "/"
+            
+  ActivityGenBucketPolicy: 
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: !Ref ActivityGenBucket
+      PolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt ActivityGenBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub "${ActivityGenBucket.Arn}/AWSLogs/${AWS::AccountId}/*" 
+            Condition: # ensure we have control of objects written to the bucket
+              StringEquals:
+                s3:x-amz-acl: "bucket-owner-full-control"
+
+  ActivityGenLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      RetentionInDays: 1
+      
+  ActivityGenInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+      - PolicyName: ActivityGenInstanceRolePolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:ListBucket
+            - s3:PutObject
+            Resource:
+            - !GetAtt ActivityGenBucket.Arn
+            - !Join [ '/', [!GetAtt ActivityGenBucket.Arn, '*']]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: { Service: ec2.amazonaws.com }
+          Action:
+          - sts:AssumeRole
+          
+  ActivityGenInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - !Ref ActivityGenInstanceRole
+          
+  ActivityGenInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref ActivityGenInstanceProfile
+      ImageId: ami-ef3b838b
+      InstanceInitiatedShutdownBehavior: terminate
+      InstanceType: t2.micro
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            curl 'http://169.254.169.254/latest/meta-data/iam/security-credentials/${ActivityGenInstanceRole}' -o creds.txt
+            aws s3 cp creds.txt s3://${ActivityGenBucket}/ --sse AES256
+    DependsOn:
+    - ActivityGenBucket
+      
+          
+  ActivityGenRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+      - PolicyName: ActivityGenPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - cloudtrail:CreateTrail
+            - cloudtrail:DeleteTrail
+            - cloudtrail:StopLogging
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DeleteLogGroup
+            - logs:PutLogEvents
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - ec2:DescribeInstanceAttribute
+            - ec2:RunInstances
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${ActivityGenInstance}"
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource: !Join [ '/', [!GetAtt ActivityGenBucket.Arn, '*']]
+          - Effect: Allow
+            Action:
+            - iam:PassRole
+            Resource: !GetAtt ActivityGenInstanceRole.Arn
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: { Service: lambda.amazonaws.com }
+          Action:
+          - sts:AssumeRole
+
+  ActivityGenLambdaFunc:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          import json
+          import random
+          import string
+          from time import sleep
+
+          import boto3
+          import botocore
+
+
+          def handler(event, context):
+              resource_name = 'ReInvent2017-SID341-{}'.format(
+                  ''.join(random.choice(string.ascii_lowercase) for _ in range(5)))
+        
+              # Create a log group CloudWatch Logs
+              logs = boto3.client('logs')
+              logs.create_log_group(logGroupName=resource_name)
+              
+              # Create a trail in CloudTrail
+              cloudtrail = boto3.client('cloudtrail')
+              cloudtrail.create_trail(Name=resource_name, S3BucketName='${ActivityGenBucket}')
+    
+              s3 = boto3.client('s3')
+              try:
+                  # Fetch the "exfiltrated" instance credentials from the S3 bucket
+                  creds_json = s3.get_object(Bucket='${ActivityGenBucket}', Key='creds.txt')['Body'].read()
+                  creds = json.loads(creds_json)
+    
+                  # Create a new Boto client using the instance credentials
+                  cred_client = boto3.client('s3',
+                      aws_access_key_id=creds['AccessKeyId'],
+                      aws_secret_access_key=creds['SecretAccessKey'],
+                      aws_session_token=creds['Token'],
+                  )
+                  
+                  # Make an s3:ListObjects call using the instance credentials
+                  res = cred_client.list_objects(Bucket='${ActivityGenBucket}')
+                  print(res)
+              except botocore.exceptions.ClientError as e:
+                  print(e)
+                  
+              # Sleep for a bit
+              sleep(random.randint(10, 30))
+              
+              cloudtrail.stop_logging(Name=resource_name)
+              
+              # Sleep for a bit
+              sleep(random.randint(10, 30))
+              
+              # Delete the log group and trail
+              logs.delete_log_group(logGroupName=resource_name)
+              cloudtrail.delete_trail(Name=resource_name)
+      Handler: index.handler
+      MemorySize: 256
+      Role: !GetAtt ActivityGenRole.Arn
+      Runtime: python3.6
+      Timeout: 300
+
+  ActivityGenEventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: "rate(5 minutes)"
+      State: "ENABLED"
+      Targets:
+      - Arn: !GetAtt ActivityGenLambdaFunc.Arn
+        Id: !Ref ActivityGenLambdaFunc
+        
+  ActivityGenEventsPermissionToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref ActivityGenLambdaFunc
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ActivityGenEventsRule.Arn
+...
