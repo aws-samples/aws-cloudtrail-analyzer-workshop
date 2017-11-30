@@ -49,7 +49,7 @@ http://amzn.to/sid341cfn
 2. On the **Specify Details** page, note that the stack name is prepopulated as "ReInvent2017-SID341", but you may change it if desired. If you'd like to receive alarm notifications via email later when we add support for alarming on CloudTrail-based detections, please fill in the **NotificationEmailAddress** parameter with your email address. Please note that if specifying a notification email address, you will receive a subscription confirmation email shortly after the stack creation completes in which you must click a link to confirm the subscription. Click **Next**.
 3. On the **Options** screen, click **Next**.
 4. On the Review page, review and confirm the settings. Be sure to check the box acknowledging that the template will create resources.
-5. Click  **Create** to deploy the stack. You can view the status of the stack in the AWS CloudFormation console in the **Status** column. You should see a status of **CREATE_COMPLETE** in roughly five minutes
+5. Click  **Create** to deploy the stack. You can view the status of the stack in the AWS CloudFormation console in the **Status** column. You should see a status of **CREATE_COMPLETE** in roughly five minutes.
 
 # Exercise 1: Examining CloudTrail logs
 
@@ -90,6 +90,39 @@ To see what the abbreviated CloudTrail records being printed by `print_short_rec
 
 Note that the `sourceIPAddress` value for actions performed by the CloudFormation template is "cloudformation.amazonaws.com". Also, notice that some actions have a region of "us-east-1" rather than "ca-central-1". This is because some services, such as IAM (iam.amazonaws.com), are global services and report region as "us-east-1" (trivia: that was the first AWS region!).
 
+## Notes on testing the Lambda function
+
+The Analysis Lambda function will be invoked about every 5 minutes when new CloudTrail log files get created, so you don't need to set up a test event if you're okay with waiting until the next invocation happens automatically.
+
+However, if you'd like to set up a test event to be able to **Save and Test** (or **Test**) the function as you make changes and have it run immediately, you can use the following template for a simplified version of the S3 Put test event to do so:
+
+```json
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "CLOUDTRAIL\_BUCKET\_NAME"
+        },
+        "object": {
+          "key": "CLOUDTRAIL\_LOG\_FILE\_PATH"
+        }
+      }
+    }
+  ]
+}
+```
+
+1. At the Analysis Lambda function, click the dropdown where it says *Select a test event* then click **Configure test event**.
+2. Select the **Event template** for "S3 Put" and fill in the **Event name** as "S3PutTest".
+3. Paste the JSON blurb above for the sample test event into the editor.
+4. Open a new tab and go to the S3 console. Find the bucket starting with "reinvent2017-sid341-cloudtrailbucket". Replace `"CLOUDTRAIL\_BUCKET\_NAME"` in the sample event with the name of this CloudTrail bucket.
+5. Go back to the S3 console tab and click on the bucket whose name starts with "reinvent2017-sid341-cloudtrailbucket". Find any CloudTrail log file in this bucket by navigating a path like the following (some values will be different): `AWSLogs/012345678900/CloudTrail/ca-central-1/2017/11/29/`.
+5. Click on a log file. On the next screen there will be a button labelled **Copy path**. Clicking that will copy the full path to this log file. Replace `"CLOUDTRAIL\_LOG\_FILE\_PATH"` in the sample event with this path.
+7. Click **Create** to create the test event.
+
+Above the Analysis Lambda function you should now see the test event selected. By clicking the **Test** button your function will be immediately invoked with that event, which will load and analyze the same CloudTrail log file every time it is run.
+
 ## Phase 1: Deleting logs
 
 The deletion of logs is an action that should normally not occur in most accounts, and may indicate an attacker trying to cover tracks.
@@ -99,6 +132,16 @@ In this exercise, we will focus on API calls that delete logs in CloudWatch Logs
 Use what you've learned about looking at CloudTrail records so far to identify the fields you will need to use, and borrow code patterns from `print_short_record` as needed.
 
 When a matching record is found, print it out using `print_short_record` and return True.
+
+You will also at this point want to comment out or remove the `print_short_record` function in the `analysis_functions` list so that only records matching the check will be printed rather than all records:
+
+```python
+analysis_functions = (
+    # print_short_record,
+    deleting_logs,
+    instance_creds_used_outside_ec2,
+)
+```
 
 ### Bonus round!
 
@@ -124,7 +167,7 @@ Examine each record to look for ones that satisfy the following 3 properties for
 
 1. User making the call is using an assumed role
 2. The user's access key is a session key that begins with the string `'AS'` instead of `'AK'`
-3. The user's ARN ends with an instance identifier consisting of the string `'i-'` followed by 8 or more alphanumeric characters in the username portion (e.g., `'i-d34db33f'`)
+3. The user's ARN ends with an instance identifier consisting of the string 'i-' followed by 8 or more alphanumeric characters in the username portion (e.g., i-d34db33f)
 
 For #3, a regular expression pattern called `instance_identifier_arn_pattern` has been predefined for you to use. You can use it with Python's `match` function that returns True if the pattern matches and False otherwise:
 
@@ -135,6 +178,8 @@ if arn_matches:
 ```
         
 When a matching record is found, print it out using `print_short_record` and return True.
+
+Hint: The event you should find in this phase is an s3:GetBucketPolicy API call. Please note that if you are looking for this event in the CloudTrail console's Event History, you will not see it there because it is a read-only action and the Event History only shows create, modify, or delete actions.
 
 ### Reference
 
@@ -186,6 +231,15 @@ To delete the CloudFormation stack, a Bash script, `teardown.sh`, has been provi
 - *Q: I'm using a different AWS CLI profile than the default.*
 - A: The script supports a flag to specify a CLI profile that is configured in your `~/.aws/config` file. Do `./teardown.sh -p PROFILE_NAME`.
 
+## Manual clean-up instructions
+
+To delete the CloudFormation stack manually, it's a two-step process, since you have to delete the S3 buckets first otherwise the CloudFormation console's delete stack operation will report a "DELETE FAILED" error since the S3 bucket still have contents.
+
+1. Go to the S3 console and delete both of the S3 buckets that the template created; their names begin with the following strings (note that there will be some random characters at the end of each bucket's name that CloudFormation inserts when deploying):
+  - reinvent2017-sid341-activitygenbucket
+  - reinvent2017-sid341-cloudtrailbucket
+2. Go to the CloudFormation console and delete the stack. Now that the S3 buckets are gone, this will work.
+
 # Walkthrough guide for Exercise 2: Automated detection 
 
 This walkthrough will give full details on how to complete each phase of the automated detection exercise, including finished code snippets that can be copied and pasted into the Lambda function.
@@ -214,7 +268,15 @@ def deleting_logs(record):
     return False
 ```
         
-Once finished, you will also want to comment out or remove `print_short_record` from the `analysis_functions` tuple so that only records that match the check in `deleting_logs` get printed.
+You will also at this point want to comment out or remove the `print_short_record` function in the `analysis_functions` list so that only records matching the check will be printed rather than all records:
+
+```python
+analysis_functions = (
+    # print_short_record,
+    deleting_logs,
+    instance_creds_used_outside_ec2,
+)
+```
 
 ### Bonus round
 
