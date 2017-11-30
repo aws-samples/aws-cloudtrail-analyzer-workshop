@@ -15,8 +15,8 @@ This repository contains the following files that will be used for this workshop
 - cloudformation.yaml - The CloudFormation template to deploy the stack of resources
 - cloudtrail_analyzer.py - Source code for the Lambda function to analyze CloudTrail logs
   - This code is just for reference since it will also be present in the inline editor in the Lambda console after the CloudFormation stack is deployed
-- teardown.sh - Script that deletes the CloudFormation stack
-  - Attempting to delete the stack from the console will fail due to the created S3 buckets having contents that need to be deleted first, so this script handles that gracefully
+- teardown.sh - Bash script that deletes the CloudFormation stack
+  - Attempting to delete the stack from the console will fail due to the created S3 buckets having contents that need to be deleted first, so this script handles that gracefully. In the **Cleaning up** section later, there are also manual clean-up steps included in case you cannot run this script.
 
 # Initial setup
 
@@ -41,9 +41,11 @@ First, log in to your AWS account using the IAM user with administrator access.
 
 For this workshop, we will be working within the Canada Central (ca-central-1) region. To switch regions, click the region dropdown in the top right of the window and select **Canada (Central)**.
 
-To easily deploy the CloudFormation stack using a copy of the *cloudformation.yaml* template that is contained in an S3 bucket, please browse to the following stack launch URL:
+To easily deploy the CloudFormation stack in the Canada (Central) region, please browse to the following stack launch URL:
 
 http://amzn.to/sid341cfn
+
+That stack launch URL uses a copy of the *cloudformation.yaml* template that is contained in an S3 bucket, which is the same as the one contained in this code repository.
 
 1. On the **Select Template** page, note that the template location where it says "Specify an Amazon S3 template URL" is prepopulated with the S3 URL to the template. Click **Next**.
 2. On the **Specify Details** page, note that the stack name is prepopulated as "ReInvent2017-SID341", but you may change it if desired. If you'd like to receive alarm notifications via email later when we add support for alarming on CloudTrail-based detections, please fill in the **NotificationEmailAddress** parameter with your email address. Please note that if specifying a notification email address, you will receive a subscription confirmation email shortly after the stack creation completes in which you must click a link to confirm the subscription. Click **Next**.
@@ -102,10 +104,10 @@ However, if you'd like to set up a test event to be able to **Save and Test** (o
     {
       "s3": {
         "bucket": {
-          "name": "CLOUDTRAIL\_BUCKET\_NAME"
+          "name": "CLOUDTRAIL_BUCKET_NAME"
         },
         "object": {
-          "key": "CLOUDTRAIL\_LOG\_FILE\_PATH"
+          "key": "CLOUDTRAIL_LOG_FILE_PATH"
         }
       }
     }
@@ -116,9 +118,9 @@ However, if you'd like to set up a test event to be able to **Save and Test** (o
 1. At the Analysis Lambda function, click the dropdown where it says *Select a test event* then click **Configure test event**.
 2. Select the **Event template** for "S3 Put" and fill in the **Event name** as "S3PutTest".
 3. Paste the JSON blurb above for the sample test event into the editor.
-4. Open a new tab and go to the S3 console. Find the bucket starting with "reinvent2017-sid341-cloudtrailbucket". Replace `"CLOUDTRAIL\_BUCKET\_NAME"` in the sample event with the name of this CloudTrail bucket.
+4. Open a new tab and go to the S3 console. Find the bucket starting with "reinvent2017-sid341-cloudtrailbucket". Replace `"CLOUDTRAIL_BUCKET_NAME"` in the sample event with the name of this CloudTrail bucket.
 5. Go back to the S3 console tab and click on the bucket whose name starts with "reinvent2017-sid341-cloudtrailbucket". Find any CloudTrail log file in this bucket by navigating a path like the following (some values will be different): `AWSLogs/012345678900/CloudTrail/ca-central-1/2017/11/29/`.
-5. Click on a log file. On the next screen there will be a button labelled **Copy path**. Clicking that will copy the full path to this log file. Replace `"CLOUDTRAIL\_LOG\_FILE\_PATH"` in the sample event with this path.
+5. Click on a log file. On the next screen there will be a button labelled **Copy path**. Clicking that will copy the full path to this log file. Replace `"CLOUDTRAIL_LOG_FILE_PATH"` in the sample event with this path.
 7. Click **Create** to create the test event.
 
 Above the Analysis Lambda function you should now see the test event selected. By clicking the **Test** button your function will be immediately invoked with that event, which will load and analyze the same CloudTrail log file every time it is run.
