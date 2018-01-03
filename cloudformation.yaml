@@ -171,6 +171,7 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
       FunctionName: !Ref AnalysisLambdaFunction
+      SourceAccount: !Sub ${AWS::AccountId}
 
   # =================================================================
   # CloudTrail (logs)
